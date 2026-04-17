@@ -1,0 +1,77 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────
+#  ServiceNow AI Automation — Docker Compose
+# ─────────────────────────────────────────────
+#
+#  Services:
+#    backend  — FastAPI RAG server (port 8000)
+#    frontend — Streamlit UI        (port 8501)
+#
+#  Ollama runs on the HOST machine (not in Docker)
+#  so both services connect via host.docker.internal.
+#
+#  Usage:
+#    docker compose -f docker/docker-compose.yml up --build
+# ─────────────────────────────────────────────
+
+services:
+
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    container_name: sn-ai-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=production
+      - APP_HOST=0.0.0.0
+      - APP_PORT=8000
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-gemma4:31b-cloud}
+      - FAISS_INDEX_PATH=/app/data/faiss_index
+      - KNOWLEDGE_BASE_DIR=/app/data/knowledge_base
+      - UPLOAD_DIR=/app/data/uploads
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - SERVICENOW_INSTANCE_URL=${SERVICENOW_INSTANCE_URL}
+      - SERVICENOW_USERNAME=${SERVICENOW_USERNAME}
+      - SERVICENOW_PASSWORD=${SERVICENOW_PASSWORD}
+    volumes:
+      - sn-ai-data:/app/data
+      - sn-ai-logs:/app/logs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Linux support
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+    container_name: sn-ai-frontend
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      - API_BASE_URL=http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  sn-ai-data:
+    driver: local
+  sn-ai-logs:
+    driver: local

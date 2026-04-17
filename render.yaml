@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: hhh-nvidia-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: EMBEDDING_DEVICE
+        value: cpu
+      - key: NVIDIA_API_KEY
+        sync: false        # set manually in Render dashboard
+      - key: NVIDIA_MODEL
+        value: google/gemma-3-27b-it
+      - key: NVIDIA_MAX_TOKENS
+        value: "512"
+      - key: NVIDIA_TEMPERATURE
+        value: "0.20"
+      - key: FAISS_INDEX_PATH
+        value: ./data/faiss_index
+      - key: KNOWLEDGE_BASE_DIR
+        value: ./data/knowledge_base
+      - key: UPLOAD_DIR
+        value: ./data/uploads
+      - key: ALLOWED_ORIGINS
+        value: "*"
+    healthCheckPath: /health

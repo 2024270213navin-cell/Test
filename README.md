@@ -1,37 +1,32 @@
-# 🤖 ServiceNow AI Automation
+# 🤖 AI Support Automation
 
-> AI-powered ticket resolution system: **ServiceNow → FastAPI → RAG (FAISS) → Ollama (Gemma) → Response**
+> FastAPI RAG pipeline — **Excel KB → ChromaDB → sentence-transformers → NVIDIA LLM → response**  
+> Python 3.11+ · Render-ready · pip-only install (no C++ compilation)
 
 ---
 
 ## 📁 Project Structure
 
 ```
-servicenow-ai/
+render_deploy/
 ├── backend/
-│   ├── __init__.py
 │   ├── main.py                    # FastAPI app factory + lifespan
 │   ├── config.py                  # Pydantic settings (env-driven)
 │   ├── api/
-│   │   ├── __init__.py
 │   │   ├── health.py              # GET /health
-│   │   ├── search.py              # POST /api/v3/search   ← ServiceNow endpoint
-│   │   └── files.py               # File upload / ingest / delete
+│   │   ├── search.py              # GET /api/v3/ask  · POST /api/v3/search
+│   │   └── files.py               # Upload / ingest / delete / preview
 │   ├── core/
-│   │   ├── __init__.py
-│   │   ├── data_processor.py      # Excel ingestion & cleaning (DataProcessor)
-│   │   ├── retriever.py           # FAISS semantic retrieval  (Retriever)
-│   │   ├── prompt_generator.py    # Prompt construction        (PromptGenerator)
-│   │   ├── response_generator.py  # Ollama API wrapper         (ResponseGenerator)
-│   │   └── rag_pipeline.py        # Pipeline orchestrator      (RAGPipeline)
+│   │   ├── data_processor.py      # Excel ingestion & cleaning
+│   │   ├── retriever.py           # ChromaDB semantic retrieval
+│   │   ├── prompt_generator.py    # Prompt construction
+│   │   ├── response_generator.py  # NVIDIA LLM wrapper
+│   │   └── rag_pipeline.py        # Pipeline orchestrator
 │   ├── models/
-│   │   ├── __init__.py
 │   │   └── schemas.py             # Pydantic request/response models
 │   └── utils/
-│       ├── __init__.py
 │       ├── logger.py              # Loguru structured logging
-│       ├── file_manager.py        # Upload directory management
-│       └── servicenow_client.py   # ServiceNow REST API client
+│       └── file_manager.py        # Upload directory management
 ├── frontend/
 │   └── app.py                     # Streamlit UI
 ├── docker/
@@ -39,21 +34,17 @@ servicenow-ai/
 │   ├── Dockerfile.frontend
 │   └── docker-compose.yml
 ├── tests/
-│   ├── __init__.py
-│   ├── test_core.py               # Unit tests (DataProcessor, PromptGenerator, schemas)
-│   └── test_api.py                # Integration tests (FastAPI endpoints)
+│   ├── test_core.py
+│   └── test_api.py
 ├── scripts/
 │   └── generate_sample_kb.py      # Generates sample Excel knowledge base
 ├── data/
-│   ├── faiss_index/               # Persisted FAISS index (auto-created)
+│   ├── chroma_db/                 # ChromaDB persistence (auto-created)
 │   ├── knowledge_base/            # Default KB storage
 │   └── uploads/                   # Uploaded Excel files
-├── logs/                          # Application logs (auto-created)
 ├── .env.example
-├── .gitignore
+├── render.yaml
 ├── Makefile
-├── pytest.ini
-├── README.md
 └── requirements.txt
 ```
 
@@ -62,24 +53,22 @@ servicenow-ai/
 ## 🧠 Architecture
 
 ```
-ServiceNow
+Client / ServiceNow
     │  POST /api/v3/search
     ▼
 FastAPI Backend
     │
-    ├─ Retriever ──────── FAISS (sentence-transformers: all-MiniLM-L6-v2)
-    │      └─ top-k chunks
+    ├─ Retriever ──────── ChromaDB (cosine similarity)
+    │      │                └─ embeddings: sentence-transformers all-MiniLM-L6-v2
+    │      └─ top-k context chunks
     │
-    ├─ PromptGenerator ── Structures: system + context + history + question
+    ├─ PromptGenerator ── system prompt + context + history + question
     │
-    └─ ResponseGenerator ─ Ollama POST /api/generate (gemma4:31b-cloud)
+    └─ ResponseGenerator ─ NVIDIA /v1/chat/completions  (google/gemma-3-27b-it)
            └─ AI response text
     │
     ▼
 SearchResponse { response, context[], model, latency_ms }
-    │
-    ▼
-ServiceNow (work note / resolution update)
 ```
 
 ---
@@ -88,20 +77,20 @@ ServiceNow (work note / resolution update)
 
 | Requirement | Version |
 |---|---|
-| Python | 3.12+ |
-| Ollama | latest |
-| RAM | 32 GB+ recommended for Gemma 31B |
-| Disk | 20 GB+ for model weights |
+| Python | 3.11+ |
+| NVIDIA API key | [build.nvidia.com](https://build.nvidia.com) |
+
+No Ollama, no Docker, no GPU required for local development.
 
 ---
 
-## 🚀 Setup Instructions
+## 🚀 Local Setup
 
-### 1. Clone & create virtual environment
+### 1. Clone & virtualenv
 
 ```bash
-git clone https://github.com/your-org/servicenow-ai.git
-cd servicenow-ai
+git clone https://github.com/your-org/ai-support.git
+cd ai-support
 
 python -m venv .venv
 source .venv/bin/activate        # Linux / macOS
@@ -111,9 +100,7 @@ source .venv/bin/activate        # Linux / macOS
 ### 2. Install dependencies
 
 ```bash
-python.exe -m pip install --upgrade pip
 pip install -r requirements.txt
-# or: make install
 ```
 
 ### 3. Configure environment
@@ -122,94 +109,101 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Edit `.env` — at minimum update:
+Minimum required values in `.env`:
+
 ```dotenv
-SERVICENOW_INSTANCE_URL=https://your-instance.service-now.com
-SERVICENOW_USERNAME=admin
-SERVICENOW_PASSWORD=your_password
-OLLAMA_BASE_URL=http://localhost:11434
+NVIDIA_API_KEY=nvapi-xxxxxxxxxxxxxxxxxxxx
 ```
 
-### 4. Install and start Ollama
+Everything else has sensible defaults.
 
-```bash
-# macOS / Linux
-curl -fsSL https://ollama.ai/install.sh | sh
-
-# Start Ollama server
-ollama serve
-
-# Pull Gemma 31B model (in a new terminal — ~20 GB download)
-ollama pull gemma4:31b-cloud
-
-# Verify the model is available
-ollama list
-```
-
-> **Tip — smaller model for testing:** Replace `gemma4:31b-cloud` with `gemma:7b` or `llama3:8b`
-> in `.env` (`OLLAMA_MODEL=gemma:7b`) if you have limited RAM.
-
-### 5. Generate sample knowledge base (optional)
+### 4. Generate sample knowledge base (optional)
 
 ```bash
 python scripts/generate_sample_kb.py
-# Creates: data/knowledge_base/sample_kb.xlsx (10 IT support Q&A rows)
+# Creates: data/knowledge_base/sample_kb.xlsx
 ```
 
----
-
-## ▶️ Running the System
-
-### Backend (FastAPI)
+### 5. Run
 
 ```bash
 # Development (hot-reload)
-make backend
-# or
 python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 
-# Production
-python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --workers 2
-```
-
-API is available at: **http://localhost:8000**  
-Interactive docs: **http://localhost:8000/docs**
-
-### Frontend (Streamlit)
-
-```bash
-# In a separate terminal
-make frontend
 # or
-streamlit run frontend/app.py --server.port 8501
+make backend
 ```
 
-UI available at: **http://localhost:8501**
+- API: **http://localhost:8000**
+- Swagger docs: **http://localhost:8000/docs**
 
 ---
 
-## 🐳 Docker Deployment
+## ☁️ Render Deployment
 
-```bash
-# Build and start all services
-make docker-up
-# or
-docker compose -f docker/docker-compose.yml up --build -d
+### One-click via `render.yaml`
 
-# View logs
-docker compose -f docker/docker-compose.yml logs -f
+The repo includes a `render.yaml`. Connect the repo in the Render dashboard and it auto-configures.
 
-# Stop
-make docker-down
-```
+Set these env vars manually in the Render dashboard (marked `sync: false`):
 
-> **Note:** Ollama must run on the host machine. The containers connect via `host.docker.internal:11434`.
+| Key | Value |
+|---|---|
+| `NVIDIA_API_KEY` | your key from build.nvidia.com |
+
+Everything else is set in `render.yaml`.
+
+### Disk persistence (optional but recommended)
+
+ChromaDB writes its index to `./data/chroma_db`. Render's default filesystem is ephemeral — the index is lost on each deploy/restart. To persist it across deploys:
+
+1. Add a **Render Disk** mount at `/data/chroma_db`
+2. Set `CHROMA_PERSIST_DIR=/data/chroma_db` in env vars
+
+No code changes needed.
 
 ---
 
 ## 📡 API Reference
 
-### `POST /api/v3/search` — ServiceNow Integration Endpoint
+### `GET /health`
+
+```json
+{
+  "status": "healthy",
+  "nvidia_reachable": true,
+  "faiss_loaded": true,
+  "indexed_chunks": 250,
+  "version": "3.0.0"
+}
+```
+
+> `faiss_loaded` reflects ChromaDB collection status (field name preserved for contract compatibility).
+
+---
+
+### `GET /api/v3/ask?q=...`
+
+Direct question to NVIDIA LLM — no KB retrieval.
+
+```bash
+curl "http://localhost:8000/api/v3/ask?q=How+do+I+reset+my+VPN+password"
+```
+
+```json
+{
+  "question": "How do I reset my VPN password?",
+  "answer": "...",
+  "model": "google/gemma-3-27b-it",
+  "latency_ms": 1240.5
+}
+```
+
+---
+
+### `POST /api/v3/search`
+
+Full RAG pipeline — retrieves KB context, then calls NVIDIA LLM.
 
 **Request:**
 ```json
@@ -226,7 +220,7 @@ make docker-down
 **Response:**
 ```json
 {
-  "response": "To reset your VPN password:\n1. Navigate to https://vpn-portal.company.com\n2. Click 'Forgot Password'...",
+  "response": "To reset your VPN password: ...",
   "context": [
     {
       "category": "VPN",
@@ -236,128 +230,88 @@ make docker-down
       "similarity_score": 0.94
     }
   ],
-  "model": "gemma4:31b-cloud",
-  "latency_ms": 3421.5,
+  "model": "google/gemma-3-27b-it",
+  "latency_ms": 2340.5,
   "timestamp": "2025-01-15T10:30:00Z"
 }
 ```
 
-### `GET /health`
-
-```json
-{
-  "status": "healthy",
-  "ollama_reachable": true,
-  "faiss_loaded": true,
-  "indexed_chunks": 250,
-  "version": "3.0.0"
-}
-```
+---
 
 ### `POST /api/v3/files/upload`
 
+Upload an Excel knowledge-base file (`.xlsx`).
+
 ```bash
 curl -X POST http://localhost:8000/api/v3/files/upload \
   -F "file=@data/knowledge_base/sample_kb.xlsx"
 ```
+
+**Required Excel columns** (case-insensitive):
+
+| Column | Description |
+|---|---|
+| `Category` | Topic grouping |
+| `Question` | The support question |
+| `Response` | The answer |
+| `Reference Information` | Optional KB article ID etc. |
+
+---
 
 ### `POST /api/v3/files/{filename}/ingest`
 
+Generate embeddings and load into ChromaDB.
+
 ```bash
 curl -X POST http://localhost:8000/api/v3/files/sample_kb.xlsx/ingest
 ```
+
+```json
+{
+  "filename": "sample_kb.xlsx",
+  "chunks_indexed": 250,
+  "message": "Successfully indexed 250 knowledge chunks from 'sample_kb.xlsx'."
+}
+```
+
+---
 
 ### `GET /api/v3/files`
 
-```bash
-curl http://localhost:8000/api/v3/files
-```
+List all uploaded files and their ingest status.
 
 ---
 
-## 🧪 Sample cURL / Postman Requests
+### `DELETE /api/v3/files/{filename}`
 
-### Full end-to-end search test:
+Delete an uploaded file from disk.
+
+---
+
+### `GET /api/v3/files/{filename}/preview`
+
+Preview first 50 rows of a file.
+
+---
+
+## 🧪 End-to-End Test (cURL)
 
 ```bash
-# 1. Check health
+# 1. Health check
 curl http://localhost:8000/health | python -m json.tool
 
-# 2. Upload the sample knowledge base
+# 2. Upload KB
 curl -X POST http://localhost:8000/api/v3/files/upload \
   -F "file=@data/knowledge_base/sample_kb.xlsx"
 
-# 3. Ingest into FAISS
+# 3. Ingest into ChromaDB
 curl -X POST http://localhost:8000/api/v3/files/sample_kb.xlsx/ingest
 
-# 4. Run a search query
+# 4. Search
 curl -X POST http://localhost:8000/api/v3/search \
   -H "Content-Type: application/json" \
-  -d '{
-    "question": "My Outlook is not syncing emails",
-    "key": "en",
-    "history": []
-  }' | python -m json.tool
-
-# 5. Multi-turn search with history
-curl -X POST http://localhost:8000/api/v3/search \
-  -H "Content-Type: application/json" \
-  -d '{
-    "question": "What if that does not work?",
-    "key": "en",
-    "history": [
-      {"role": "user",      "content": "Outlook is not syncing"},
-      {"role": "assistant", "content": "Try File → Account Settings → Repair..."}
-    ]
-  }' | python -m json.tool
-```
-
----
-
-## 🧪 Running Tests
-
-```bash
-# All tests
-make test
-# or
-pytest tests/ -v
-
-# Specific test file
-pytest tests/test_core.py -v
-pytest tests/test_api.py -v
-
-# With coverage
-pytest tests/ --cov=backend --cov-report=html
-```
-
----
-
-## 🔌 ServiceNow Integration
-
-The system is designed to be called from ServiceNow Business Rules or Flow Designer.
-
-### ServiceNow REST Message (outbound) example:
-
-```javascript
-// ServiceNow Script Include / Business Rule
-var r = new RESTMessageV2();
-r.setEndpoint('http://your-server:8000/api/v3/search');
-r.setHttpMethod('POST');
-r.setRequestHeader('Content-Type', 'application/json');
-
-var body = {
-    question: current.short_description + ' ' + current.description,
-    key: 'en',
-    history: []
-};
-r.setRequestBody(JSON.stringify(body));
-
-var response = r.execute();
-var aiResponse = JSON.parse(response.getBody());
-
-// Update work notes on the incident
-current.work_notes = '[AI Suggestion]\n' + aiResponse.response;
-current.update();
+  -d '{"question": "My Outlook is not syncing emails", "key": "en", "history": []}' \
+  | python -m json.tool
 ```
 
 ---
@@ -366,14 +320,45 @@ current.update();
 
 | Variable | Default | Description |
 |---|---|---|
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
-| `OLLAMA_MODEL` | `gemma4:31b-cloud` | Model name |
-| `OLLAMA_TIMEOUT` | `120` | Request timeout (seconds) |
-| `OLLAMA_TEMPERATURE` | `0.3` | LLM temperature |
+| `NVIDIA_API_KEY` | *(required)* | NVIDIA API key |
+| `NVIDIA_MODEL` | `google/gemma-3-27b-it` | LLM model name |
+| `NVIDIA_MAX_TOKENS` | `512` | Max response tokens |
+| `NVIDIA_TEMPERATURE` | `0.20` | LLM temperature |
+| `NVIDIA_TIMEOUT` | `60` | Request timeout (seconds) |
 | `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | sentence-transformers model |
-| `FAISS_TOP_K` | `5` | Retrieved context chunks |
-| `FAISS_INDEX_PATH` | `./data/faiss_index` | Index persistence path |
-| `UPLOAD_DIR` | `./data/uploads` | Excel upload directory |
+| `EMBEDDING_DEVICE` | `cpu` | `cpu` or `cuda` |
+| `CHROMA_PERSIST_DIR` | `./data/chroma_db` | ChromaDB storage path |
+| `RETRIEVER_TOP_K` | `5` | Context chunks retrieved per query |
+| `KNOWLEDGE_BASE_DIR` | `./data/knowledge_base` | Default KB directory |
+| `UPLOAD_DIR` | `./data/uploads` | Uploaded file directory |
+| `ALLOWED_ORIGINS` | `*` | CORS origins |
+| `LOG_LEVEL` | `INFO` | Logging verbosity |
+
+---
+
+## 🧪 Running Tests
+
+```bash
+pytest tests/ -v
+
+# With coverage
+pytest tests/ --cov=backend --cov-report=html
+```
+
+---
+
+## 🐳 Docker
+
+```bash
+# Start all services
+docker compose -f docker/docker-compose.yml up --build -d
+
+# Logs
+docker compose -f docker/docker-compose.yml logs -f
+
+# Stop
+docker compose -f docker/docker-compose.yml down
+```
 
 ---
 
@@ -381,9 +366,16 @@ current.update();
 
 | Problem | Solution |
 |---|---|
-| `Cannot connect to Ollama` | Run `ollama serve` in a terminal |
-| `model not found` | Run `ollama pull gemma4:31b-cloud` |
-| `FAISS index not loaded` | Upload + ingest an Excel file first via UI or API |
-| `Ollama timeout` | Increase `OLLAMA_TIMEOUT` in `.env`; Gemma 31B is slow on CPU |
-| `Missing columns` error | Ensure Excel has exactly: Category, Question, Response, Reference Information |
-| Out of memory | Use `gemma:7b` or `llama3:8b` instead of `gemma4:31b-cloud` |
+| `ChromaDB collection not loaded` | Upload + ingest an Excel file first |
+| `LLM service error` | Check `NVIDIA_API_KEY` is set and valid |
+| `Missing columns` error | Excel must have: Category, Question, Response, Reference Information |
+| Index lost after Render restart | Add a Render Disk mounted at `CHROMA_PERSIST_DIR` |
+| Slow first request | Embedding model downloads on first use (~90 MB) — subsequent requests are fast |
+
+---
+
+## 🔄 Migrating from FAISS version
+
+Old `data/faiss_index/` files (`index.faiss`, `metadata.pkl`) are not used.
+After deploying, simply re-ingest your Excel file via `/api/v3/files/{filename}/ingest`.
+No data format changes — same Excel, same API contracts.
